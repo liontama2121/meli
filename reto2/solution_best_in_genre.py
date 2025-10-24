@@ -2,7 +2,6 @@
 # File: solution_best_in_genre.py
 # Challenge: Mercado Libre Tech Challenge – Reto 2
 # Task: REST API – Best TV Shows in Genre
-# Language: Python 3.10.12
 # Author: Juan Camilo Molina León
 # -----------------------------------------------------------
 
