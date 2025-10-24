@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Mercado Libre · Best TV Shows Challenge</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { background-color:#fff159; font-family: 'Segoe UI', Arial, sans-serif; margin:0; padding:0; color:#2d3277; }
+    .navbar { background:#2d3277; color:#fff; padding:12px 20px; font-weight:bold; }
+    .container { background:#fff; max-width: 820px; margin: 30px auto; padding: 22px;
+      border-radius: 14px; box-shadow: 0 6px 18px rgba(0,0,0,.08); }
+    h1,h2 { text-align:center; margin:10px 0; }
+    label { font-weight:600; }
+    input, button { width:100%; padding:10px; margin:6px 0 14px; border-radius:8px; border:1px solid #ddd; font-size:16px; }
+    button { background:#2d3277; color:#fff; cursor:pointer; }
+    button:hover { background:#23255e; }
+    .row { display:grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background:#f8f8f8; padding:14px; border-radius:10px; }
+    .result-card { background:#f5f5f5; padding:14px; border-radius:10px; margin-top:14px; }
+    .muted { color:#555; text-align:center; }
+    .top-list { list-style:none; padding:0; margin:0; }
+    .top-list li { background:#fff; padding:12px; margin:8px 0; border-radius:10px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.06); display:flex; justify-content:space-between; align-items:center; }
+    .top-list li:first-child { background:#fff8b3; border:2px solid #2d3277; font-weight:bold; }
+    .flex { display:flex; align-items:center; gap:8px; }
+  </style>
+</head>
+<body>
+  <div class="navbar">Mercado Libre · Best TV Shows Challenge</div>
+  <div class="container">
+    <h1>🎬 Mejores Series por Género</h1>
+    <p class="muted">Inicia sesión y consulta el Top por género. El #1 aparece con 👑.</p>
+
+    <div class="row">
+      <div class="card">
+        <h2>Login</h2>
+        <label>Usuario</label>
+        <input id="username" placeholder="admin">
+        <label>Contraseña</label>
+        <input id="password" type="password" placeholder="••••••••">
+        <button onclick="login()">Entrar</button>
+        <button onclick="logout()" style="margin-top:6px;background:#888">Salir</button>
+        <p id="authMsg" class="muted"></p>
+      </div>
+
+      <div class="card">
+        <h2>Top por Género</h2>
+        <label>Género (ej: Action, Drama, Comedy)</label>
+        <input id="genre" placeholder="Action">
+        <label>Límite</label>
+        <input id="limit" type="number" value="5" min="1" max="50">
+        <button onclick="loadTop()">Ver Top</button>
+      </div>
+    </div>
+
+    <div id="bestBox" class="result-card" style="display:none"></div>
+    <div id="topBox"  class="result-card" style="display:none"></div>
+  </div>
+
+  <script>
+    async function login() {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      document.getElementById('authMsg').textContent =
+        res.ok ? 'Sesión iniciada.' : (data.error || 'Error de login');
+    }
+
+    async function logout() {
+      const res = await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json();
+      document.getElementById('authMsg').textContent = data.ok ? 'Sesión cerrada.' : 'Error al cerrar sesión';
+    }
+
+    function renderBest(genre, first) {
+      if (!first) return '';
+      return `<h3>🏆 Mejor serie del género: <em>${genre}</em></h3>
+              <p><strong>${first.name}</strong> — IMDB: ${first.rating}</p>`;
+    }
+
+    function renderTop(list) {
+      if (!list || !list.length) return '<p>No hay resultados.</p>';
+      const items = list.map((it, idx) => {
+        const crown = idx === 0 ? '👑 ' : '';
+        return `<li><span class="flex">${crown}<span>${it.name}</span></span><span>${it.rating}</span></li>`;
+      }).join('');
+      return `<ol class="top-list">${items}</ol>`;
+    }
+
+    async function loadTop() {
+      const genre = document.getElementById('genre').value.trim();
+      const limit = document.getElementById('limit').value || 5;
+      if (!genre) return;
+
+      const res = await fetch(`/api/top?genre=${encodeURIComponent(genre)}&limit=${encodeURIComponent(limit)}`, {
+        credentials: 'same-origin'
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        document.getElementById('bestBox').style.display = 'block';
+        document.getElementById('bestBox').innerHTML = `<p>Error: ${data.error || 'Inicie sesión primero.'}</p>`;
+        document.getElementById('topBox').style.display = 'none';
+        return;
+      }
+
+      const list = data.results || [];
+      document.getElementById('bestBox').style.display = 'block';
+      document.getElementById('bestBox').innerHTML = renderBest(genre, list[0] || null);
+
+      document.getElementById('topBox').style.display = 'block';
+      document.getElementById('topBox').innerHTML = `<h3>📺 Top del género: <em>${genre}</em></h3>${renderTop(list)}`;
+    }
+  </script>
+</body>
+</html>

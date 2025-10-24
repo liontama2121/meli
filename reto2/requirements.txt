@@ -1,0 +1,5 @@
+Flask==2.2.5
+PyJWT==2.8.0
+passlib[bcrypt]==1.7.4
+requests==2.31.0
+gunicorn==20.1.0
