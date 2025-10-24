@@ -1,5 +1,3 @@
-// File: solution_summarizer.go
-// Go version: go1.22 (indique aquí la versión exacta que usó)
 // Reto 4: CLI que resume un archivo usando una API pública de GenAI.
 // Requisitos del reto: aceptar --input y --type (short|medium|bullet),
 // llamar un endpoint público (HuggingFace Inference API), reflejar el tipo en el prompt,
