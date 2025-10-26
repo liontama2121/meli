@@ -479,8 +479,3 @@ echo "Mercado Libre está desarrollando nuevas herramientas de IA para mejorar l
 ```bash
 go run solution_summarizer.go --input ejemplo.txt --type bullet
 ``
-
-
-## ⚙️ Autor
-
-Juan C. Molina
