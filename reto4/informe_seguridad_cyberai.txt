@@ -1,0 +1,4 @@
+El 12 de septiembre de 2025, Carlos Andrés Rivera reportó que el bucket de respaldos contenía archivos con datos sensibles. En el CSV solicitudes_q3.csv aparecían nombres completos, correos (por ejemplo, paula.rojas@empresa.co
+), teléfonos (+57 310 555 7788) y números de cuenta (4228-9901-1134).
+También se observaron intentos de acceso desde IP 177.95.14.203 entre el 8 y el 10 de septiembre. El equipo recomendó cifrado AES-256, RBAC estricto, rotación de credenciales y auditoría continua.
+La fintech (orientada a microcréditos) planea integrar un descubridor de PII y políticas DLP para prevenir exposición futura, junto con capacitación del personal y revisión de respaldos mensuales.

@@ -88,6 +88,7 @@ def main():
         [1, 1, 0, 0]
     ]
 
+    # ajustar al usuario  a su acomodo 
     # Llamada a la función principal
     resultado = contar_minas_vecinas(tablero)
 
@@ -102,5 +103,6 @@ def main():
 # ==========================
 # EJECUCIÓN DEL PROGRAMA
 # ==========================
+
 if __name__ == "__main__":
     main()
