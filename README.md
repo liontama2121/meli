@@ -211,13 +211,6 @@ Si falta un campo o el tipo es incorrecto, el sistema devuelve un **error 400 (`
 
 ---
 
-
-## 🧑‍💻 Autor
-
-Juan C. Molina  
-Desarrollador Java / Python  
-Reto 2 · Mercado Libre · 2025
-
 # 🔐 Reto 3 – Base de datos segura con Supabase (PostgreSQL + RLS)
 
 Base de datos **gratuita y segura** en **Supabase** (PostgreSQL administrado) para el Reto 3.  
@@ -479,3 +472,8 @@ echo "Mercado Libre está desarrollando nuevas herramientas de IA para mejorar l
 ```bash
 go run solution_summarizer.go --input ejemplo.txt --type bullet
 ``
+```
+## 🧑‍💻 Autor
+Juan C. Molina  
+Desarrollador Java / Python  
+Reto 2 · Mercado Libre · 2025
