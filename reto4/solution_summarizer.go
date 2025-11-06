@@ -1,8 +1,19 @@
 // server.go
+// Go 1.20+
+// API HTTP para resumir texto usando Hugging Face (router nuevo):
+//   export HF_API_TOKEN=xxxxx
+//   HF_MODEL=facebook/bart-large-cnn go run server.go
+//
+// POST /api/summarize
+//   { "text": "...", "type": "short|medium|bullet", "privacy":"mask|redact", "strip_names": true }
+// Respuesta:
+//   { "summary": "..." }
+
 package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,12 +33,25 @@ type hfRequest struct {
 	Options    map[string]interface{} `json:"options,omitempty"`
 }
 
+type hfError struct {
+	Error string `json:"error"`
+}
+
 const (
 	defaultModel         = "facebook/bart-large-cnn"
-	hfAPIBase            = "https://api-inference.huggingface.co/models/"
+	hfAPIBase            = "https://router.huggingface.co/hf-inference/models/"
 	clientTimeout        = 60 * time.Second
 	maxCharsPerChunk     = 4000
 	maxJoinForSecondPass = 6000
+
+	// Servidor
+	serverReadHeaderTimeout = 5 * time.Second
+	serverReadTimeout       = 20 * time.Second
+	serverWriteTimeout      = 60 * time.Second
+	serverIdleTimeout       = 60 * time.Second
+
+	// Request limits
+	maxJSONBodyBytes = 1 << 20 // 1 MB
 )
 
 // =================== API Types ===================
@@ -53,17 +78,34 @@ func main() {
 	mux.HandleFunc("/healthz", withCORS(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	}))
+	mux.HandleFunc("/readyz", withCORS(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"ready": "true"})
+	}))
 
 	port := getenvDefault("PORT", "8080")
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+	}
+
 	fmt.Fprintf(os.Stderr, "Listening on :%s\n", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		panic(err)
 	}
+
+	// graceful shutdown (si agregas señales)
+	_ = srv.Shutdown(context.Background())
 }
 
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Ajusta ORIGEN si necesitas restringir
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Vary", "Origin")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
@@ -80,11 +122,20 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Límite de body y decoder estricto
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	defer r.Body.Close()
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
 	var req summarizeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON inválido"})
+	if err := dec.Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON inválido: " + err.Error()})
 		return
 	}
+
+	// Normalizaciones y defaults
 	req.Type = strings.ToLower(strings.TrimSpace(req.Type))
 	if req.Type == "" {
 		req.Type = "medium"
@@ -102,7 +153,24 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 		req.Bullets = 6
 	}
 
-	model := getenvDefault("HF_MODEL", defaultModel)
+	// Caps razonables (defensa)
+	if req.NumBeams > 8 {
+		req.NumBeams = 8
+	}
+	if req.LengthPenalty > 2.0 {
+		req.LengthPenalty = 2.0
+	}
+	if req.Bullets > 12 {
+		req.Bullets = 12
+	}
+
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "text vacío"})
+		return
+	}
+
+	model := strings.TrimSpace(getenvDefault("HF_MODEL", defaultModel))
 	token := os.Getenv("HF_API_TOKEN")
 	endpoint := hfAPIBase + model
 
@@ -119,7 +187,7 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1) Scrubbing PII de entrada
-	clean := scrubPII(req.Text, req.Privacy, req.StripNames)
+	clean := scrubPII(text, req.Privacy, req.StripNames)
 
 	// 2) Header guía según tipo
 	header := buildHeader(req.Type, req.Bullets)
@@ -138,9 +206,16 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 	if maxLen < minLen {
 		maxLen = minLen + 40
 	}
+	// caps de seguridad
+	if minLen < 10 {
+		minLen = 10
+	}
+	if maxLen > 600 {
+		maxLen = 600
+	}
 
 	client := &http.Client{Timeout: clientTimeout}
-	chunks := chunkText(strings.TrimSpace(clean), maxCharsPerChunk)
+	chunks := chunkText(clean, maxCharsPerChunk)
 
 	var parts []string
 	for i, ch := range chunks {
@@ -222,11 +297,17 @@ func callHF(client *http.Client, endpoint, token, input string, minLen, maxLen, 
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode != http.StatusOK {
+		// Intenta decodificar error de HF
+		var herr hfError
+		if json.Unmarshal(body, &herr) == nil && strings.TrimSpace(herr.Error) != "" {
+			return "", fmt.Errorf("API %d: %s", resp.StatusCode, truncate(herr.Error, 500))
+		}
 		return "", fmt.Errorf("API %d: %s", resp.StatusCode, truncate(string(body), 500))
 	}
 
-	// [{"summary_text":"..."}] o [{"generated_text":"..."}]
+	// Posibles formatos: [{"summary_text":"..."}] o [{"generated_text":"..."}] o {"summary_text":"..."}
 	if s, err := parseHFSummary(body); err == nil && s != "" {
 		return s, nil
 	}
@@ -273,7 +354,6 @@ func parseHFGeneratedText(body []byte) string {
 // Entrada: versión “blindada” (IPv4/IPv6 + emails + phones + cuentas + tarjetas + IDs + nombres opcional)
 func scrubPII(s, privacy string, stripNames bool) string {
 	out := strings.ReplaceAll(s, "\u00A0", " ")
-
 	reCard := regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`)
 	reAccount := regexp.MustCompile(`\b\d{3,4}[- ]\d{3,4}[- ]\d{3,}\b`)
 
@@ -285,7 +365,7 @@ func scrubPII(s, privacy string, stripNames bool) string {
 	rePhone := regexp.MustCompile(`\b(?:\+?\d{1,3}[ -]?)?(?:\(?\d{2,4}\)?[ -]?)?\d{3,4}[ -]?\d{4}\b`)
 	reID := regexp.MustCompile(`\b(?:ID|CC|NIT|DNI|SSN)[:\s\-]*[A-Z0-9\-]{4,}\b`)
 
-	switch strings.ToLower(privacy) {
+	switch strings.ToLower(strings.TrimSpace(privacy)) {
 	case "mask":
 		out = reCard.ReplaceAllString(out, "[CARD]")
 		out = reAccount.ReplaceAllString(out, "[ACCOUNT]")
@@ -336,7 +416,6 @@ func scrubPII(s, privacy string, stripNames bool) string {
 // Salida: por si el modelo “reconstruye” PII
 func scrubPIIOut(s string) string {
 	out := strings.ReplaceAll(s, "\u00A0", " ")
-
 	replacements := []struct {
 		re   *regexp.Regexp
 		with string
@@ -368,6 +447,8 @@ func buildHeader(kind string, bullets int) string {
 		return fmt.Sprintf("Resume el siguiente texto en %d viñetas claras y detalladas, evitando PII/PCI:", bullets)
 	case "medium":
 		return "Resume el siguiente texto en 1–3 párrafos claros y detallados, evitando PII/PCI:"
+	case "short":
+		return "Resume el siguiente texto brevemente en 3–5 oraciones, evitando PII/PCI:"
 	default:
 		return ""
 	}
@@ -483,7 +564,10 @@ func truncate(s string, n int) string {
 
 func isRetryable(err error) bool {
 	msg := err.Error()
+	// incluye 410/429/5xx y errores típicos de carga del modelo
 	return strings.Contains(msg, "API 400") ||
+		strings.Contains(msg, "API 410") ||
+		strings.Contains(msg, "API 429") ||
 		strings.Contains(msg, "API 5") ||
 		strings.Contains(msg, "index out of range") ||
 		strings.Contains(msg, "Model is loading") ||
@@ -502,3 +586,12 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// ========= extra util (para logs legibles) =========
+func boolToStr(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}
+func iToStr(i int) string { return strconv.Itoa(i) }
