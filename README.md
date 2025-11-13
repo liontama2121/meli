@@ -476,4 +476,4 @@ go run solution_summarizer.go --input ejemplo.txt --type bullet
 ## 🧑‍💻 Autor
 Juan C. Molina  
 Desarrollador Java / Python  
-Reto 2 · Mercado Libre · 2025
+
